@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  ScrollView
+  ScrollView,
+  Dimensions
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import AgentStatusScreen from './AgentStatusScreen';
 
 interface WebAgentProps {
   theme: 'light' | 'dark';
@@ -24,20 +26,45 @@ export default function WebAgent({ theme }: WebAgentProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [command, setCommand] = useState('');
   const [history, setHistory] = useState<string[]>([]);
+  const [statusUpdates, setStatusUpdates] = useState<string[]>([]);
+  const [showStatusPanel, setShowStatusPanel] = useState(false);
+  const [showFullStatusScreen, setShowFullStatusScreen] = useState(false);
   const webViewRef = useRef<WebView>(null);
+  const statusScrollViewRef = useRef<ScrollView>(null);
+  const historyScrollViewRef = useRef<ScrollView>(null);
 
   const isDark = theme === 'dark';
   const backgroundColor = isDark ? '#1a1a2e' : '#f0f8ff';
   const textColor = isDark ? '#fff' : '#333';
   const inputBgColor = isDark ? '#2d2d42' : '#fff';
   const borderColor = isDark ? '#3d3d5c' : '#ddd';
+  const accentColor = isDark ? '#6a6aff' : '#4040ff';
+  const statusBgColor = isDark ? '#2a2a3e' : '#e6f0ff';
+
+  const addStatusUpdate = (message: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const update = `[${timestamp}] ${message}`;
+    setStatusUpdates(prev => [...prev, update]);
+    
+    setTimeout(() => {
+      statusScrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+
+  const addHistoryItem = (message: string) => {
+    setHistory(prev => [...prev, message]);
+    
+    setTimeout(() => {
+      historyScrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
 
   const executeCommand = () => {
     if (!command.trim()) return;
     
-    setHistory(prev => [...prev, `> ${command}`]);
+    addHistoryItem(`> ${command}`);
+    addStatusUpdate(`Received command: "${command}"`);
     
-    // Simple command parsing
     const lowerCommand = command.toLowerCase();
     
     if (lowerCommand.startsWith('go to ') || lowerCommand.startsWith('visit ')) {
@@ -48,13 +75,16 @@ export default function WebAgent({ theme }: WebAgentProps) {
       searchGoogle(query);
     } else if (lowerCommand === 'back') {
       webViewRef.current?.goBack();
-      setHistory(prev => [...prev, 'Going back to previous page']);
+      addHistoryItem('Going back to previous page');
+      addStatusUpdate('Navigating to previous page in history');
     } else if (lowerCommand === 'forward') {
       webViewRef.current?.goForward();
-      setHistory(prev => [...prev, 'Going forward to next page']);
+      addHistoryItem('Going forward to next page');
+      addStatusUpdate('Navigating to next page in history');
     } else if (lowerCommand === 'reload' || lowerCommand === 'refresh') {
       webViewRef.current?.reload();
-      setHistory(prev => [...prev, 'Reloading page']);
+      addHistoryItem('Reloading page');
+      addStatusUpdate('Refreshing current page content');
     } else if (lowerCommand.startsWith('click ')) {
       const element = command.split(' ').slice(1).join(' ');
       clickElement(element);
@@ -64,86 +94,142 @@ export default function WebAgent({ theme }: WebAgentProps) {
     } else if (lowerCommand === 'help') {
       showHelp();
     } else {
-      setHistory(prev => [...prev, 'Unknown command. Type "help" for available commands.']);
+      addHistoryItem('Unknown command. Type "help" for available commands.');
+      addStatusUpdate('Error: Unrecognized command format');
     }
     
     setCommand('');
   };
 
   const navigateToSite = (site: string) => {
+    addStatusUpdate(`Processing URL: "${site}"`);
+    
     let processedUrl = site;
     
-    // Check if the URL has a protocol
     if (!site.startsWith('http://') && !site.startsWith('https://')) {
       processedUrl = 'https://' + site;
+      addStatusUpdate(`Adding https:// protocol: "${processedUrl}"`);
     }
     
-    // Add .com if there's no TLD
     if (!processedUrl.includes('.')) {
       processedUrl += '.com';
+      addStatusUpdate(`Adding .com TLD: "${processedUrl}"`);
     }
     
+    addStatusUpdate(`Initiating navigation to: ${processedUrl}`);
     setUrl(processedUrl);
-    setHistory(prev => [...prev, `Navigating to ${processedUrl}`]);
+    addHistoryItem(`Navigating to ${processedUrl}`);
   };
 
   const searchGoogle = (query: string) => {
+    addStatusUpdate(`Preparing search for: "${query}"`);
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    addStatusUpdate(`Encoded search URL: ${searchUrl}`);
     setUrl(searchUrl);
-    setHistory(prev => [...prev, `Searching for "${query}"`]);
+    addHistoryItem(`Searching for "${query}"`);
+    addStatusUpdate(`Initiated Google search for: "${query}"`);
   };
 
   const clickElement = (element: string) => {
+    addStatusUpdate(`Looking for element containing text: "${element}"`);
+    
     const script = `
       (function() {
-        // Try to find by text content
         const elements = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="submit"], input[type="button"]'));
         const found = elements.find(el => 
           el.innerText && el.innerText.toLowerCase().includes('${element.toLowerCase()}')
         );
         
         if (found) {
-          found.click();
+          const originalBackground = found.style.backgroundColor;
+          const originalTransition = found.style.transition;
+          found.style.transition = 'background-color 0.3s';
+          found.style.backgroundColor = '#ffcc00';
+          
+          setTimeout(() => {
+            found.style.backgroundColor = originalBackground;
+            found.style.transition = originalTransition;
+            found.click();
+          }, 300);
+          
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'elementFound',
+            text: found.innerText || found.value || 'element',
+            tagName: found.tagName
+          }));
           return true;
         }
         
-        // Try to find by aria-label
         const ariaElement = Array.from(document.querySelectorAll('[aria-label]')).find(
           el => el.getAttribute('aria-label').toLowerCase().includes('${element.toLowerCase()}')
         );
         
         if (ariaElement) {
-          ariaElement.click();
+          const originalBackground = ariaElement.style.backgroundColor;
+          const originalTransition = ariaElement.style.transition;
+          ariaElement.style.transition = 'background-color 0.3s';
+          ariaElement.style.backgroundColor = '#ffcc00';
+          
+          setTimeout(() => {
+            ariaElement.style.backgroundColor = originalBackground;
+            ariaElement.style.transition = originalTransition;
+            ariaElement.click();
+          }, 300);
+          
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'elementFound',
+            text: ariaElement.innerText || ariaElement.getAttribute('aria-label') || 'element',
+            tagName: ariaElement.tagName
+          }));
           return true;
         }
         
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'elementNotFound',
+          searchText: '${element}'
+        }));
         return false;
       })();
     `;
     
     webViewRef.current?.injectJavaScript(script);
-    setHistory(prev => [...prev, `Attempting to click "${element}"`]);
+    addHistoryItem(`Attempting to click "${element}"`);
   };
 
   const typeText = (text: string) => {
+    addStatusUpdate(`Preparing to type text: "${text}"`);
+    
     const script = `
       (function() {
         const input = document.querySelector('input:focus');
         if (input) {
+          const originalValue = input.value;
           input.value = '${text.replace(/'/g, "\\'")}';
           const event = new Event('input', { bubbles: true });
           input.dispatchEvent(event);
+          
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'textTyped',
+            element: input.name || input.id || 'input field',
+            text: '${text.replace(/'/g, "\\'")}'
+          }));
           return true;
         }
+        
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'noInputFocused'
+        }));
         return false;
       })();
     `;
     
     webViewRef.current?.injectJavaScript(script);
-    setHistory(prev => [...prev, `Typing "${text}"`]);
+    addHistoryItem(`Typing "${text}"`);
   };
 
   const showHelp = () => {
+    addStatusUpdate('Displaying help information');
+    
     const helpText = [
       'Available commands:',
       '- go to [website]: Navigate to a website',
@@ -157,8 +243,43 @@ export default function WebAgent({ theme }: WebAgentProps) {
       '- help: Show this help message'
     ];
     
-    setHistory(prev => [...prev, ...helpText]);
+    helpText.forEach(text => addHistoryItem(text));
+    addStatusUpdate('Help information displayed successfully');
   };
+
+  const handleWebViewMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      
+      switch (data.type) {
+        case 'elementFound':
+          addStatusUpdate(`Found element: <${data.tagName.toLowerCase()}> with text "${data.text}"`);
+          addStatusUpdate(`Clicking on element...`);
+          break;
+        case 'elementNotFound':
+          addStatusUpdate(`Error: Could not find any element containing "${data.searchText}"`);
+          break;
+        case 'textTyped':
+          addStatusUpdate(`Text entered into ${data.element}`);
+          break;
+        case 'noInputFocused':
+          addStatusUpdate(`Error: No input field is currently focused`);
+          break;
+      }
+    } catch (error) {
+      console.log('Error parsing WebView message:', error);
+    }
+  };
+
+  if (showFullStatusScreen) {
+    return (
+      <AgentStatusScreen 
+        theme={theme}
+        statusUpdates={statusUpdates}
+        onClose={() => setShowFullStatusScreen(false)}
+      />
+    );
+  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor }]}>
@@ -167,30 +288,97 @@ export default function WebAgent({ theme }: WebAgentProps) {
         <Text style={[styles.currentUrl, { color: isDark ? '#aaa' : '#666' }]} numberOfLines={1}>
           {currentUrl}
         </Text>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity 
+            style={[styles.statusToggle, { backgroundColor: accentColor }]}
+            onPress={() => setShowStatusPanel(!showStatusPanel)}
+          >
+            <Text style={styles.statusToggleText}>
+              {showStatusPanel ? 'Hide Status' : 'Show Status'}
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.fullStatusButton, { backgroundColor: accentColor }]}
+            onPress={() => setShowFullStatusScreen(true)}
+          >
+            <Ionicons name="analytics-outline" size={16} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
       
-      <View style={styles.webViewContainer}>
+      {showStatusPanel && (
+        <View style={[styles.statusContainer, { backgroundColor: statusBgColor, borderColor }]}>
+          <View style={styles.statusHeader}>
+            <Text style={[styles.statusTitle, { color: textColor }]}>
+              Agent Status Updates
+            </Text>
+            <TouchableOpacity onPress={() => setShowFullStatusScreen(true)}>
+              <Text style={[styles.viewFullButton, { color: accentColor }]}>
+                View Full Log
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView 
+            ref={statusScrollViewRef}
+            style={styles.statusScrollView}
+            contentContainerStyle={styles.statusContent}
+          >
+            {statusUpdates.length === 0 ? (
+              <Text style={[styles.statusEmpty, { color: isDark ? '#aaa' : '#666' }]}>
+                No status updates yet. Execute a command to see updates.
+              </Text>
+            ) : (
+              statusUpdates.slice(-10).map((update, index) => (
+                <Text key={index} style={[styles.statusItem, { color: textColor }]}>
+                  {update}
+                </Text>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      )}
+      
+      <View style={[
+        styles.webViewContainer, 
+        { flex: showStatusPanel ? 0.4 : 1 }
+      ]}>
         {isLoading && (
           <ActivityIndicator 
             style={styles.loader} 
             size="large" 
-            color={isDark ? '#6a6aff' : '#4040ff'} 
+            color={accentColor} 
           />
         )}
         <WebView
           ref={webViewRef}
           source={{ uri: url }}
           style={styles.webView}
-          onLoadStart={() => setIsLoading(true)}
-          onLoadEnd={() => setIsLoading(false)}
-          onNavigationStateChange={(navState) => {
-            setCurrentUrl(navState.url);
+          onLoadStart={() => {
+            setIsLoading(true);
+            addStatusUpdate(`Loading started: ${url}`);
           }}
+          onLoadEnd={() => {
+            setIsLoading(false);
+            addStatusUpdate(`Page loaded successfully: ${currentUrl}`);
+          }}
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            addStatusUpdate(`Error loading page: ${nativeEvent.description}`);
+          }}
+          onNavigationStateChange={(navState) => {
+            if (navState.url !== currentUrl) {
+              addStatusUpdate(`Navigation state changed to: ${navState.url}`);
+              setCurrentUrl(navState.url);
+            }
+          }}
+          onMessage={handleWebViewMessage}
         />
       </View>
       
       <View style={[styles.controlsContainer, { backgroundColor }]}>
         <ScrollView 
+          ref={historyScrollViewRef}
           style={[styles.historyContainer, { backgroundColor: inputBgColor, borderColor }]}
           contentContainerStyle={styles.historyContent}
         >
@@ -223,7 +411,7 @@ export default function WebAgent({ theme }: WebAgentProps) {
           <TouchableOpacity 
             style={[
               styles.sendButton, 
-              { backgroundColor: isDark ? '#6a6aff' : '#4040ff' }
+              { backgroundColor: accentColor }
             ]} 
             onPress={executeCommand}
           >
@@ -243,14 +431,77 @@ const styles = StyleSheet.create({
     padding: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   title: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 5,
   },
   currentUrl: {
     fontSize: 12,
+    flex: 1,
+    marginHorizontal: 10,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusToggle: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
+    marginRight: 5,
+  },
+  fullStatusButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusToggleText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusContainer: {
+    height: Dimensions.get('window').height * 0.25,
+    borderWidth: 1,
+    borderRadius: 5,
+    margin: 10,
+    padding: 10,
+  },
+  statusHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  statusTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  viewFullButton: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusScrollView: {
+    flex: 1,
+  },
+  statusContent: {
+    paddingBottom: 5,
+  },
+  statusItem: {
+    fontSize: 12,
+    marginBottom: 3,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  statusEmpty: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 10,
   },
   webViewContainer: {
     flex: 1,
