@@ -3,78 +3,101 @@ import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface ExtractionProgressProps {
-  status: 'idle' | 'loading' | 'success' | 'error';
-  message?: string;
+  currentPage: number;
+  totalPages: number;
   theme: 'light' | 'dark';
 }
 
-export default function ExtractionProgress({ status, message, theme }: ExtractionProgressProps) {
+export default function ExtractionProgress({ currentPage, totalPages, theme }: ExtractionProgressProps) {
   const isDark = theme === 'dark';
   const textColor = isDark ? '#fff' : '#333';
-  const backgroundColor = isDark ? '#2d2d42' : '#fff';
-  const borderColor = isDark ? '#3d3d5c' : '#ddd';
+  const backgroundColor = isDark ? '#2d2d42' : '#f0f8ff';
+  const accentColor = isDark ? '#6a6aff' : '#4040ff';
   
-  let statusColor = '#4040ff'; // Default blue
-  let icon = 'information-circle-outline';
+  const progress = totalPages > 0 ? (currentPage / totalPages) * 100 : 0;
   
-  switch (status) {
-    case 'loading':
-      statusColor = isDark ? '#6a6aff' : '#4040ff';
-      icon = 'hourglass-outline';
-      break;
-    case 'success':
-      statusColor = '#4CAF50'; // Green
-      icon = 'checkmark-circle-outline';
-      break;
-    case 'error':
-      statusColor = '#ff4d4d'; // Red
-      icon = 'alert-circle-outline';
-      break;
-    default:
-      statusColor = isDark ? '#aaa' : '#666';
-  }
-
   return (
-    <View style={[styles.container, { backgroundColor, borderColor }]}>
-      {status === 'loading' ? (
-        <ActivityIndicator size="small" color={statusColor} style={styles.icon} />
-      ) : (
-        <Ionicons name={icon} size={24} color={statusColor} style={styles.icon} />
-      )}
-      <Text style={[styles.message, { color: textColor }]}>
-        {message || getDefaultMessage(status)}
-      </Text>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={styles.iconContainer}>
+        <Ionicons name="document-text-outline" size={24} color={accentColor} />
+      </View>
+      
+      <View style={styles.infoContainer}>
+        <Text style={[styles.title, { color: textColor }]}>
+          Extracting Text
+        </Text>
+        
+        <Text style={[styles.subtitle, { color: isDark ? '#aaa' : '#666' }]}>
+          Page {currentPage} of {totalPages > 0 ? totalPages : '?'}
+        </Text>
+        
+        <View style={styles.progressContainer}>
+          <View style={styles.progressBarBackground}>
+            <View 
+              style={[
+                styles.progressBarFill, 
+                { 
+                  width: `${progress}%`,
+                  backgroundColor: accentColor
+                }
+              ]} 
+            />
+          </View>
+          <Text style={[styles.progressText, { color: isDark ? '#aaa' : '#666' }]}>
+            {Math.round(progress)}%
+          </Text>
+        </View>
+      </View>
+      
+      <ActivityIndicator size="small" color={accentColor} style={styles.spinner} />
     </View>
   );
-}
-
-function getDefaultMessage(status: 'idle' | 'loading' | 'success' | 'error'): string {
-  switch (status) {
-    case 'idle':
-      return 'Ready to extract text';
-    case 'loading':
-      return 'Extracting text from document...';
-    case 'success':
-      return 'Text extracted successfully!';
-    case 'error':
-      return 'Failed to extract text';
-  }
 }
 
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderRadius: 8,
+    padding: 15,
+    borderRadius: 10,
     marginVertical: 10,
   },
-  icon: {
-    marginRight: 12,
+  iconContainer: {
+    marginRight: 15,
   },
-  message: {
-    fontSize: 14,
+  infoContainer: {
     flex: 1,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  subtitle: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  progressBarBackground: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#ddd',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+  },
+  progressText: {
+    marginLeft: 8,
+    fontSize: 12,
+    width: 40,
+    textAlign: 'right',
+  },
+  spinner: {
+    marginLeft: 10,
   },
 });

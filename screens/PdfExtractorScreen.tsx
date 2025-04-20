@@ -23,7 +23,8 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   const [extractedText, setExtractedText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isPdfLoading, setIsPdfLoading] = useState<boolean>(false);
+  const [showWebView, setShowWebView] = useState<boolean>(false);
+  const [pdfUri, setPdfUri] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
 
   const isDark = theme === 'dark';
@@ -81,14 +82,10 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     const mimeType = document.assets[0].mimeType;
 
     if (mimeType === 'application/pdf') {
-      // For PDFs, we'll use the WebView approach
-      setIsPdfLoading(true);
+      // For PDFs, we'll use a WebView to extract text
       setIsLoading(true);
-      
-      // The actual extraction happens in the WebView's injected JavaScript
-      // We'll show the WebView temporarily to extract the text
-      
-      // The extraction will be completed when the WebView sends a message
+      setPdfUri(fileUri);
+      setShowWebView(true);
     } else if (mimeType === 'text/plain') {
       // For text files, we've already extracted the text
       if (!extractedText) {
@@ -104,13 +101,17 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'pdfText') {
         setExtractedText(data.text);
-        setIsPdfLoading(false);
+        setShowWebView(false);
+        setIsLoading(false);
+      } else if (data.type === 'pdfError') {
+        setError(data.error);
+        setShowWebView(false);
         setIsLoading(false);
       }
     } catch (error) {
       console.error('Error parsing WebView message:', error);
       setError('Failed to extract text from PDF.');
-      setIsPdfLoading(false);
+      setShowWebView(false);
       setIsLoading(false);
     }
   };
@@ -152,162 +153,217 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     }
   };
 
-  // This is the JavaScript that will be injected into the WebView to extract text from PDFs
-  const pdfExtractorScript = `
-    // Function to extract text from PDF using PDF.js
-    async function extractPdfText() {
-      try {
-        // Load PDF.js from CDN
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js';
-        document.head.appendChild(script);
+  // Create a simple HTML page that uses PDF.js from CDN to extract text
+  const createPdfExtractorHtml = (pdfBase64: string) => {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PDF Text Extractor</title>
+        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 20px; }
+          #status { color: #666; }
+        </style>
+      </head>
+      <body>
+        <div id="status">Extracting text from PDF...</div>
         
-        // Wait for PDF.js to load
-        await new Promise(resolve => {
-          script.onload = resolve;
-        });
-        
-        // Get the PDF file from the URL
-        const pdfUrl = window.location.href;
-        const loadingTask = pdfjsLib.getDocument(pdfUrl);
-        const pdf = await loadingTask.promise;
-        
-        let fullText = '';
-        
-        // Extract text from each page
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const textItems = textContent.items.map(item => item.str);
-          fullText += textItems.join(' ') + '\\n';
-        }
-        
-        // Send the extracted text back to React Native
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'pdfText',
-          text: fullText
-        }));
-      } catch (error) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'error',
-          message: error.toString()
-        }));
-      }
+        <script>
+          // Initialize PDF.js
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
+          
+          async function extractText() {
+            try {
+              // Convert base64 to array buffer
+              const pdfData = atob('${pdfBase64}');
+              const uint8Array = new Uint8Array(pdfData.length);
+              for (let i = 0; i < pdfData.length; i++) {
+                uint8Array[i] = pdfData.charCodeAt(i);
+              }
+              
+              // Load the PDF document
+              const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+              const pdf = await loadingTask.promise;
+              
+              document.getElementById('status').textContent = 'Processing ' + pdf.numPages + ' pages...';
+              
+              // Extract text from all pages
+              let fullText = '';
+              for (let i = 1; i <= pdf.numPages; i++) {
+                document.getElementById('status').textContent = 'Processing page ' + i + ' of ' + pdf.numPages + '...';
+                
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const textItems = textContent.items.map(item => item.str);
+                fullText += textItems.join(' ') + '\\n';
+              }
+              
+              // Send the extracted text back to React Native
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'pdfText',
+                text: fullText
+              }));
+              
+              document.getElementById('status').textContent = 'Text extraction complete!';
+            } catch (error) {
+              console.error('Error extracting text:', error);
+              document.getElementById('status').textContent = 'Error: ' + error.message;
+              
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'pdfError',
+                error: error.message
+              }));
+            }
+          }
+          
+          // Start extraction when page loads
+          extractText();
+        </script>
+      </body>
+      </html>
+    `;
+  };
+
+  // Load PDF and convert to base64 for the WebView
+  const loadPdfInWebView = async () => {
+    if (!pdfUri) return;
+    
+    try {
+      const base64 = await FileSystem.readAsStringAsync(pdfUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      
+      return createPdfExtractorHtml(base64);
+    } catch (error) {
+      console.error('Error loading PDF:', error);
+      setError(`Failed to load PDF: ${error}`);
+      setShowWebView(false);
+      setIsLoading(false);
+      return null;
     }
-    
-    // Start extraction when the page loads
-    document.addEventListener('DOMContentLoaded', extractPdfText);
-    
-    // If the document is already loaded, start extraction immediately
-    if (document.readyState === 'complete') {
-      extractPdfText();
-    }
-    
-    true;
-  `;
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor }]}>
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: textColor }]}>PDF Text Extractor</Text>
-      </View>
-
-      <View style={[styles.uploadCard, { backgroundColor: cardBgColor, borderColor }]}>
-        <Ionicons name="document-text-outline" size={48} color={accentColor} />
-        <Text style={[styles.uploadTitle, { color: textColor }]}>
-          Upload PDF or Document
-        </Text>
-        <Text style={[styles.uploadSubtitle, { color: isDark ? '#aaa' : '#666' }]}>
-          Select a document to extract text with 100% accuracy
-        </Text>
-        <TouchableOpacity
-          style={[styles.uploadButton, { backgroundColor: accentColor }]}
-          onPress={pickDocument}
-        >
-          <Text style={styles.uploadButtonText}>Select Document</Text>
-        </TouchableOpacity>
-
-        {document && !document.canceled && (
-          <View style={styles.selectedFile}>
-            <Ionicons name="document" size={20} color={accentColor} />
-            <Text style={[styles.fileName, { color: textColor }]} numberOfLines={1}>
-              {document.assets[0].name}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {document && !document.canceled && document.assets[0].mimeType === 'application/pdf' && (
-        <TouchableOpacity
-          style={[styles.extractButton, { backgroundColor: accentColor }]}
-          onPress={extractText}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={styles.extractButtonText}>Extract Text</Text>
-          )}
-        </TouchableOpacity>
-      )}
-
-      {error && (
-        <View style={[styles.errorContainer, { borderColor: '#ff4d4d' }]}>
-          <Ionicons name="alert-circle-outline" size={24} color="#ff4d4d" />
-          <Text style={[styles.errorText, { color: '#ff4d4d' }]}>{error}</Text>
-        </View>
-      )}
-
-      {isPdfLoading && document && !document.canceled && document.assets[0].mimeType === 'application/pdf' && (
+      {showWebView && pdfUri ? (
         <View style={styles.webViewContainer}>
           <WebView
             ref={webViewRef}
-            source={{ uri: document.assets[0].uri }}
-            style={{ width: 1, height: 1, opacity: 0 }}
             originWhitelist={['*']}
-            javaScriptEnabled={true}
-            injectedJavaScript={pdfExtractorScript}
+            source={{ html: createPdfExtractorHtml('') }} // Start with empty HTML
             onMessage={handleWebViewMessage}
+            onLoadEnd={async () => {
+              // When WebView loads, inject the PDF data
+              const html = await loadPdfInWebView();
+              if (html) {
+                webViewRef.current?.injectJavaScript(`
+                  document.open();
+                  document.write(\`${html}\`);
+                  document.close();
+                  true;
+                `);
+              }
+            }}
+            style={styles.webView}
           />
-        </View>
-      )}
-
-      {extractedText ? (
-        <View style={styles.resultContainer}>
-          <View style={styles.resultHeader}>
-            <Text style={[styles.resultTitle, { color: textColor }]}>Extracted Text</Text>
-            <View style={styles.resultActions}>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: accentColor }]}
-                onPress={copyToClipboard}
-              >
-                <Ionicons name="copy-outline" size={18} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: accentColor }]}
-                onPress={shareExtractedText}
-              >
-                <Ionicons name="share-outline" size={18} color="#fff" />
-              </TouchableOpacity>
-            </View>
+          <View style={[styles.loadingOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.loadingText}>Extracting text from PDF...</Text>
           </View>
-          <ScrollView
-            style={[styles.textContainer, { backgroundColor: cardBgColor, borderColor }]}
-            contentContainerStyle={styles.textContent}
-          >
-            <Text style={[styles.extractedText, { color: textColor }]}>{extractedText}</Text>
-          </ScrollView>
         </View>
       ) : (
-        <View style={styles.placeholderContainer}>
-          <Text style={[styles.placeholderText, { color: isDark ? '#aaa' : '#666' }]}>
-            {isLoading
-              ? 'Extracting text...'
-              : document && !document.canceled
-              ? 'Press "Extract Text" to begin extraction'
-              : 'Select a document to extract text'}
-          </Text>
-        </View>
+        <>
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: textColor }]}>PDF Text Extractor</Text>
+          </View>
+
+          <View style={[styles.uploadCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <Ionicons name="document-text-outline" size={48} color={accentColor} />
+            <Text style={[styles.uploadTitle, { color: textColor }]}>
+              Upload PDF or Document
+            </Text>
+            <Text style={[styles.uploadSubtitle, { color: isDark ? '#aaa' : '#666' }]}>
+              Select a document to extract text with 100% accuracy
+            </Text>
+            <TouchableOpacity
+              style={[styles.uploadButton, { backgroundColor: accentColor }]}
+              onPress={pickDocument}
+            >
+              <Text style={styles.uploadButtonText}>Select Document</Text>
+            </TouchableOpacity>
+
+            {document && !document.canceled && (
+              <View style={styles.selectedFile}>
+                <Ionicons name="document" size={20} color={accentColor} />
+                <Text style={[styles.fileName, { color: textColor }]} numberOfLines={1}>
+                  {document.assets[0].name}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {document && !document.canceled && (
+            <TouchableOpacity
+              style={[styles.extractButton, { backgroundColor: accentColor }]}
+              onPress={extractText}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.extractButtonText}>Extract Text</Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {error && (
+            <View style={[styles.errorContainer, { borderColor: '#ff4d4d' }]}>
+              <Ionicons name="alert-circle-outline" size={24} color="#ff4d4d" />
+              <Text style={[styles.errorText, { color: '#ff4d4d' }]}>{error}</Text>
+            </View>
+          )}
+
+          {extractedText ? (
+            <View style={styles.resultContainer}>
+              <View style={styles.resultHeader}>
+                <Text style={[styles.resultTitle, { color: textColor }]}>Extracted Text</Text>
+                <View style={styles.resultActions}>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: accentColor }]}
+                    onPress={copyToClipboard}
+                  >
+                    <Ionicons name="copy-outline" size={18} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: accentColor }]}
+                    onPress={shareExtractedText}
+                  >
+                    <Ionicons name="share-outline" size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <ScrollView
+                style={[styles.textContainer, { backgroundColor: cardBgColor, borderColor }]}
+                contentContainerStyle={styles.textContent}
+              >
+                <Text style={[styles.extractedText, { color: textColor }]}>{extractedText}</Text>
+              </ScrollView>
+            </View>
+          ) : (
+            <View style={styles.placeholderContainer}>
+              <Text style={[styles.placeholderText, { color: isDark ? '#aaa' : '#666' }]}>
+                {isLoading
+                  ? 'Extracting text...'
+                  : document && !document.canceled
+                  ? 'Press "Extract Text" to begin extraction'
+                  : 'Select a document to extract text'}
+              </Text>
+            </View>
+          )}
+        </>
       )}
     </SafeAreaView>
   );
@@ -441,9 +497,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   webViewContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  webView: {
+    flex: 1,
+  },
+  loadingOverlay: {
     position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#fff',
+    marginTop: 10,
+    fontSize: 16,
   },
 });

@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import WebAgent from './components/WebAgent';
 import PdfExtractorScreen from './screens/PdfExtractorScreen';
-import * as Clipboard from 'expo-clipboard';
 
 export default function App() {
   const [theme, setTheme] = useState('light');
