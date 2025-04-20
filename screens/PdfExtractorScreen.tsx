@@ -203,39 +203,132 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PDF Text Extractor</title>
-        <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+        <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
         <style>
           body {
             font-family: Arial, sans-serif;
-            margin: 20px;
-            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f5f5f5;
           }
           #status {
-            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #333;
+            color: white;
             font-weight: bold;
+            text-align: center;
+          }
+          #drop-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border: 3px dashed #ccc;
+            border-radius: 10px;
+            margin: 20px;
+            padding: 20px;
+            text-align: center;
+            background-color: #f9f9f9;
+          }
+          #drop-area.highlight {
+            border-color: #2196F3;
+            background-color: #e3f2fd;
           }
           #file-input {
-            margin-bottom: 20px;
+            display: none;
           }
-          #output {
-            white-space: pre-wrap;
-            border: 1px solid #ddd;
-            padding: 10px;
-            background: #f9f9f9;
-            min-height: 200px;
-            max-height: 400px;
-            overflow-y: auto;
+          #select-button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+          }
+          #extract-button {
+            background-color: #2196F3;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            display: none;
+          }
+          #progress-container {
+            width: 100%;
+            margin-top: 20px;
+            display: none;
+          }
+          #progress-bar {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+          }
+          #progress {
+            height: 20px;
+            background-color: #4CAF50;
+            width: 0%;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+          }
+          #file-info {
+            margin-top: 10px;
+            font-style: italic;
+            display: none;
           }
         </style>
       </head>
       <body>
-        <div id="status">Select a PDF file to extract text</div>
-        <input type="file" id="file-input" accept="application/pdf" />
-        <div id="output"></div>
+        <div id="status">PDF Text Extractor</div>
+        
+        <div id="drop-area">
+          <p>Drag & drop a PDF file here or click to select</p>
+          <input type="file" id="file-input" accept="application/pdf" />
+          <button id="select-button">Select PDF</button>
+          <button id="extract-button">Extract Text</button>
+          <div id="file-info"></div>
+          <div id="progress-container">
+            <div id="progress-bar">
+              <div id="progress">0%</div>
+            </div>
+          </div>
+        </div>
         
         <script>
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
+          // Initialize PDF.js
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
           
+          // Elements
+          const dropArea = document.getElementById('drop-area');
+          const fileInput = document.getElementById('file-input');
+          const selectButton = document.getElementById('select-button');
+          const extractButton = document.getElementById('extract-button');
+          const fileInfo = document.getElementById('file-info');
+          const progressContainer = document.getElementById('progress-container');
+          const progress = document.getElementById('progress');
+          const status = document.getElementById('status');
+          
+          // Variables
+          let selectedFile = null;
+          let pdfDocument = null;
+          
+          // Function to send messages to React Native
           function sendToReactNative(message) {
             if (window.ReactNativeWebView) {
               window.ReactNativeWebView.postMessage(JSON.stringify(message));
@@ -244,114 +337,249 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             }
           }
           
-          document.getElementById('file-input').addEventListener('change', function(event) {
-            const file = event.target.files[0];
-            if (file && file.type === 'application/pdf') {
-              extractTextFromPdf(file);
-            }
+          // Notify React Native that the page is ready
+          setTimeout(() => {
+            sendToReactNative({ type: 'pageReady' });
+            status.textContent = 'Ready to extract text from PDF';
+          }, 500);
+          
+          // Handle file selection via button
+          selectButton.addEventListener('click', () => {
+            fileInput.click();
           });
           
-          function extractTextFromPdf(file) {
+          // Handle file selection
+          fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+          });
+          
+          // Handle drag and drop
+          ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+          });
+          
+          function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          
+          ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, highlight, false);
+          });
+          
+          ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, unhighlight, false);
+          });
+          
+          function highlight() {
+            dropArea.classList.add('highlight');
+          }
+          
+          function unhighlight() {
+            dropArea.classList.remove('highlight');
+          }
+          
+          dropArea.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+          });
+          
+          // Process the selected files
+          function handleFiles(files) {
+            if (files.length > 0) {
+              selectedFile = files[0];
+              
+              if (selectedFile.type === 'application/pdf') {
+                fileInfo.textContent = \`Selected: \${selectedFile.name} (\${formatFileSize(selectedFile.size)})\`;
+                fileInfo.style.display = 'block';
+                extractButton.style.display = 'inline-block';
+                
+                // Auto-extract if in React Native
+                if (window.ReactNativeWebView) {
+                  extractText();
+                }
+              } else {
+                fileInfo.textContent = 'Please select a PDF file.';
+                fileInfo.style.display = 'block';
+                extractButton.style.display = 'none';
+              }
+            }
+          }
+          
+          // Format file size
+          function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' bytes';
+            else if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            else return (bytes / 1048576).toFixed(1) + ' MB';
+          }
+          
+          // Extract text button
+          extractButton.addEventListener('click', extractText);
+          
+          // Extract text from PDF
+          function extractText() {
+            if (!selectedFile) {
+              status.textContent = 'No PDF file selected';
+              return;
+            }
+            
+            status.textContent = 'Loading PDF...';
+            progressContainer.style.display = 'block';
+            progress.style.width = '0%';
+            progress.textContent = '0%';
+            
             const reader = new FileReader();
             
-            reader.onload = function(event) {
-              const typedArray = new Uint8Array(event.target.result);
+            reader.onload = function(e) {
+              const typedArray = new Uint8Array(e.target.result);
               
-              document.getElementById('status').textContent = 'Loading PDF...';
-              
-              pdfjsLib.getDocument(typedArray).promise.then(function(pdf) {
+              // Load the PDF document
+              pdfjsLib.getDocument(typedArray).promise.then(pdf => {
+                pdfDocument = pdf;
                 const totalPages = pdf.numPages;
-                document.getElementById('status').textContent = 'PDF loaded: ' + totalPages + ' pages';
                 
+                status.textContent = \`PDF loaded: \${totalPages} pages\`;
+                
+                // Send total pages info to React Native
                 sendToReactNative({
                   type: 'pdfInfo',
                   totalPages: totalPages
                 });
                 
+                // Extract text from all pages
                 let extractedText = '';
                 let currentPage = 0;
                 
-                function extractNextPage() {
+                // Process pages one by one
+                function processNextPage() {
                   currentPage++;
                   
                   if (currentPage <= totalPages) {
-                    document.getElementById('status').textContent = 'Extracting page ' + currentPage + ' of ' + totalPages;
+                    // Update progress
+                    const percentComplete = Math.round((currentPage / totalPages) * 100);
+                    progress.style.width = percentComplete + '%';
+                    progress.textContent = percentComplete + '%';
                     
+                    status.textContent = \`Extracting page \${currentPage} of \${totalPages}\`;
+                    
+                    // Send progress to React Native
                     sendToReactNative({
                       type: 'pdfProgress',
                       currentPage: currentPage,
                       totalPages: totalPages
                     });
                     
-                    pdf.getPage(currentPage).then(function(page) {
-                      page.getTextContent().then(function(textContent) {
+                    // Get page
+                    pdf.getPage(currentPage).then(page => {
+                      // Get text content
+                      page.getTextContent().then(textContent => {
+                        // Extract text
                         const pageText = textContent.items.map(item => item.str).join(' ');
                         extractedText += pageText + '\\n\\n';
                         
-                        document.getElementById('output').textContent = extractedText;
-                        
-                        if (currentPage % 5 === 0 || currentPage === totalPages) {
+                        // Send partial text every few pages or on the last page
+                        if (currentPage % 3 === 0 || currentPage === totalPages) {
                           sendToReactNative({
                             type: 'pdfPartialText',
                             text: extractedText,
                             isFinal: currentPage === totalPages
                           });
                           
+                          // Clear buffer if not the final page
                           if (currentPage !== totalPages) {
                             extractedText = '';
                           }
                         }
                         
-                        setTimeout(extractNextPage, 10);
-                      }).catch(function(error) {
-                        const errorMsg = 'Error extracting text from page ' + currentPage + ': ' + error.message;
-                        document.getElementById('status').textContent = errorMsg;
+                        // Process next page
+                        setTimeout(processNextPage, 10);
+                      }).catch(error => {
+                        console.error('Error extracting text from page:', error);
+                        status.textContent = \`Error extracting text from page \${currentPage}: \${error.message}\`;
+                        
                         sendToReactNative({
                           type: 'pdfError',
-                          error: errorMsg
+                          error: \`Error extracting text from page \${currentPage}: \${error.message}\`
                         });
                       });
-                    }).catch(function(error) {
-                      const errorMsg = 'Error getting page ' + currentPage + ': ' + error.message;
-                      document.getElementById('status').textContent = errorMsg;
+                    }).catch(error => {
+                      console.error('Error getting page:', error);
+                      status.textContent = \`Error getting page \${currentPage}: \${error.message}\`;
+                      
                       sendToReactNative({
                         type: 'pdfError',
-                        error: errorMsg
+                        error: \`Error getting page \${currentPage}: \${error.message}\`
                       });
                     });
+                  } else {
+                    // All pages processed
+                    status.textContent = 'Text extraction complete!';
                   }
                 }
                 
-                extractNextPage();
-              }).catch(function(error) {
-                const errorMsg = 'Error loading PDF: ' + error.message;
-                document.getElementById('status').textContent = errorMsg;
+                // Start processing pages
+                processNextPage();
+                
+              }).catch(error => {
+                console.error('Error loading PDF:', error);
+                status.textContent = \`Error loading PDF: \${error.message}\`;
+                
                 sendToReactNative({
                   type: 'pdfError',
-                  error: errorMsg
+                  error: \`Error loading PDF: \${error.message}\`
                 });
               });
             };
             
             reader.onerror = function(error) {
-              const errorMsg = 'Error reading file: ' + error;
-              document.getElementById('status').textContent = errorMsg;
+              console.error('Error reading file:', error);
+              status.textContent = \`Error reading file: \${error}\`;
+              
               sendToReactNative({
                 type: 'pdfError',
-                error: errorMsg
+                error: \`Error reading file: \${error}\`
               });
             };
             
-            reader.readAsArrayBuffer(file);
+            // Read the file
+            reader.readAsArrayBuffer(selectedFile);
           }
           
-          if (window.ReactNativeWebView) {
-            setTimeout(() => {
-              sendToReactNative({
-                type: 'pageReady'
+          // Function to load a PDF from a URL
+          function loadPdfFromUrl(url) {
+            status.textContent = 'Fetching PDF from URL...';
+            
+            fetch(url)
+              .then(response => {
+                if (!response.ok) {
+                  throw new Error(\`HTTP error! status: \${response.status}\`);
+                }
+                return response.blob();
+              })
+              .then(blob => {
+                // Create a File object
+                selectedFile = new File([blob], 'document.pdf', { type: 'application/pdf' });
+                
+                fileInfo.textContent = \`Selected: document.pdf (\${formatFileSize(selectedFile.size)})\`;
+                fileInfo.style.display = 'block';
+                
+                // Auto-extract
+                extractText();
+              })
+              .catch(error => {
+                console.error('Error fetching PDF:', error);
+                status.textContent = \`Error fetching PDF: \${error.message}\`;
+                
+                sendToReactNative({
+                  type: 'pdfError',
+                  error: \`Error fetching PDF: \${error.message}\`
+                });
               });
-            }, 500);
           }
+          
+          // Expose the loadPdfFromUrl function to the window object
+          window.loadPdfFromUrl = loadPdfFromUrl;
         </script>
       </body>
       </html>
@@ -382,9 +610,9 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   useEffect(() => {
     let timeoutTimer: NodeJS.Timeout | null = null;
     
-    if (isLoading && showWebView && totalPages === 0 && preparationTime > 15) {
+    if (isLoading && showWebView && totalPages === 0 && preparationTime > 10) {
       timeoutTimer = setTimeout(() => {
-        console.log('PDF preparation timed out after 15 seconds');
+        console.log('PDF preparation timed out after 10 seconds');
         setError('PDF extraction timed out. Please try again or try a different PDF.');
         setShowWebView(false);
         setIsLoading(false);
@@ -413,55 +641,24 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             startInLoadingState={true}
             onLoad={() => {
               if (webViewRef.current && pdfUri) {
-                console.log('WebView loaded, injecting PDF URI:', pdfUri);
+                console.log('WebView loaded, loading PDF from URI:', pdfUri);
                 
-                if (Platform.OS === 'web') {
-                  webViewRef.current.injectJavaScript(`
-                    fetch('${pdfUri}')
-                      .then(response => response.blob())
-                      .then(blob => {
-                        const file = new File([blob], 'document.pdf', { type: 'application/pdf' });
-                        const dataTransfer = new DataTransfer();
-                        dataTransfer.items.add(file);
-                        const fileInput = document.getElementById('file-input');
-                        fileInput.files = dataTransfer.files;
-                        const event = new Event('change', { bubbles: true });
-                        fileInput.dispatchEvent(event);
-                      })
-                      .catch(error => {
-                        console.error('Error fetching PDF:', error);
-                        sendToReactNative({
-                          type: 'pdfError',
-                          error: 'Error fetching PDF: ' + error.message
-                        });
-                      });
-                    true;
-                  `);
-                } else {
-                  webViewRef.current.injectJavaScript(`
-                    setTimeout(() => {
-                      fetch('${pdfUri}')
-                        .then(response => response.blob())
-                        .then(blob => {
-                          const file = new File([blob], 'document.pdf', { type: 'application/pdf' });
-                          const container = new DataTransfer();
-                          container.items.add(file);
-                          const fileInput = document.getElementById('file-input');
-                          fileInput.files = container.files;
-                          const event = new Event('change', { bubbles: true });
-                          fileInput.dispatchEvent(event);
-                        })
-                        .catch(error => {
-                          console.error('Error fetching PDF:', error);
-                          sendToReactNative({
-                            type: 'pdfError',
-                            error: 'Error fetching PDF: ' + error.message
-                          });
-                        });
-                    }, 1000);
-                    true;
-                  `);
-                }
+                // Use a simpler approach to load the PDF
+                webViewRef.current.injectJavaScript(`
+                  // Call the loadPdfFromUrl function with the PDF URI
+                  if (window.loadPdfFromUrl) {
+                    window.loadPdfFromUrl('${pdfUri}');
+                  } else {
+                    console.error('loadPdfFromUrl function not available');
+                    if (window.ReactNativeWebView) {
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'pdfError',
+                        error: 'PDF loading function not available'
+                      }));
+                    }
+                  }
+                  true;
+                `);
               }
             }}
             onError={(syntheticEvent) => {
@@ -480,9 +677,16 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
                 : `Preparing PDF for extraction... (${preparationTime}s)`}
             </Text>
             {preparationTime > 10 && totalPages === 0 && (
-              <Text style={[styles.loadingSubText, { color: '#ff9999' }]}>
-                This is taking longer than expected. Please try again.
-              </Text>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowWebView(false);
+                  setIsLoading(false);
+                  setError('PDF extraction cancelled. Please try again with a different PDF.');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
             )}
             {totalPages > 0 && (
               <View style={styles.progressBarContainer}>
@@ -783,5 +987,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     width: 40,
     textAlign: 'right',
+  },
+  cancelButton: {
+    marginTop: 15,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    backgroundColor: '#ff4d4d',
+    borderRadius: 20,
+  },
+  cancelButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
 });
