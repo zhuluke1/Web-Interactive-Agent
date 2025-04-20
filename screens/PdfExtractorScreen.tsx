@@ -17,12 +17,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { extractTextFromDocument } from '../services/pdfService';
+import ExtractionProgress from '../components/ExtractionProgress';
+import DocumentInfo from '../components/DocumentInfo';
 
 export default function PdfExtractorScreen({ theme = 'light' }) {
   const [document, setDocument] = useState<DocumentPicker.DocumentResult | null>(null);
   const [extractedText, setExtractedText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(0);
   const [showWebView, setShowWebView] = useState<boolean>(false);
   const [pdfUri, setPdfUri] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
@@ -49,7 +53,6 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
       setExtractedText('');
       setError(null);
       
-      // If it's a text file, extract immediately
       if (result.assets[0].mimeType === 'text/plain') {
         extractTextFromTxt(result.assets[0].uri);
       }
@@ -80,14 +83,16 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
 
     const fileUri = document.assets[0].uri;
     const mimeType = document.assets[0].mimeType;
+    
+    setExtractedText('');
+    setCurrentPage(0);
+    setTotalPages(0);
 
     if (mimeType === 'application/pdf') {
-      // For PDFs, we'll use a WebView to extract text
       setIsLoading(true);
       setPdfUri(fileUri);
       setShowWebView(true);
     } else if (mimeType === 'text/plain') {
-      // For text files, we've already extracted the text
       if (!extractedText) {
         extractTextFromTxt(fileUri);
       }
@@ -99,11 +104,29 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   const handleWebViewMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'pdfText') {
+      
+      if (data.type === 'pdfInfo') {
+        setTotalPages(data.totalPages);
+      } 
+      else if (data.type === 'pdfProgress') {
+        setCurrentPage(data.currentPage);
+        setTotalPages(data.totalPages);
+      }
+      else if (data.type === 'pdfPartialText') {
+        if (data.isFinal) {
+          setExtractedText(prevText => prevText + data.text);
+          setShowWebView(false);
+          setIsLoading(false);
+        } else {
+          setExtractedText(prevText => prevText + data.text);
+        }
+      }
+      else if (data.type === 'pdfText') {
         setExtractedText(data.text);
         setShowWebView(false);
         setIsLoading(false);
-      } else if (data.type === 'pdfError') {
+      } 
+      else if (data.type === 'pdfError') {
         setError(data.error);
         setShowWebView(false);
         setIsLoading(false);
@@ -123,7 +146,6 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     }
 
     try {
-      // Create a temporary file to share
       const fileUri = `${FileSystem.cacheDirectory}extracted_text.txt`;
       await FileSystem.writeAsStringAsync(fileUri, extractedText);
 
@@ -153,7 +175,6 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     }
   };
 
-  // Create a simple HTML page that uses PDF.js from CDN to extract text
   const createPdfExtractorHtml = (pdfBase64: string) => {
     return `
       <!DOCTYPE html>
@@ -172,40 +193,81 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         <div id="status">Extracting text from PDF...</div>
         
         <script>
-          // Initialize PDF.js
+          // Initialize PDF.js with optimized settings
           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
           
           async function extractText() {
             try {
-              // Convert base64 to array buffer
+              // Convert base64 to array buffer more efficiently
               const pdfData = atob('${pdfBase64}');
               const uint8Array = new Uint8Array(pdfData.length);
               for (let i = 0; i < pdfData.length; i++) {
                 uint8Array[i] = pdfData.charCodeAt(i);
               }
               
-              // Load the PDF document
-              const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+              // Load the PDF document with optimized settings
+              const loadingTask = pdfjsLib.getDocument({
+                data: uint8Array,
+                cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/cmaps/',
+                cMapPacked: true,
+                disableFontFace: true, // Disable font rendering for speed
+                disableRange: true,
+                disableStream: true,
+                disableAutoFetch: true
+              });
+              
               const pdf = await loadingTask.promise;
+              const totalPages = pdf.numPages;
               
-              document.getElementById('status').textContent = 'Processing ' + pdf.numPages + ' pages...';
+              // Report total pages to React Native
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'pdfInfo',
+                totalPages: totalPages
+              }));
               
-              // Extract text from all pages
+              // Extract text from all pages with a faster approach
               let fullText = '';
-              for (let i = 1; i <= pdf.numPages; i++) {
-                document.getElementById('status').textContent = 'Processing page ' + i + ' of ' + pdf.numPages + '...';
+              
+              // Process pages in smaller batches for better performance
+              const BATCH_SIZE = 5;
+              for (let i = 1; i <= totalPages; i++) {
+                // Report progress to React Native
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'pdfProgress',
+                  currentPage: i,
+                  totalPages: totalPages
+                }));
                 
                 const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
+                
+                // Use a lower scale for faster text extraction
+                const textContent = await page.getTextContent({
+                  normalizeWhitespace: true,
+                  disableCombineTextItems: false
+                });
+                
                 const textItems = textContent.items.map(item => item.str);
                 fullText += textItems.join(' ') + '\\n';
+                
+                // Send partial results for large documents
+                if (i % BATCH_SIZE === 0 || i === totalPages) {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'pdfPartialText',
+                    text: fullText,
+                    isFinal: i === totalPages
+                  }));
+                  
+                  // Clear the text buffer if not the final batch
+                  if (i !== totalPages) {
+                    fullText = '';
+                  }
+                }
+                
+                // Allow UI to update between pages
+                if (i < totalPages) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                }
               }
-              
-              // Send the extracted text back to React Native
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'pdfText',
-                text: fullText
-              }));
               
               document.getElementById('status').textContent = 'Text extraction complete!';
             } catch (error) {
@@ -219,22 +281,27 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             }
           }
           
-          // Start extraction when page loads
-          extractText();
+          // Start extraction when page loads with a small delay to ensure WebView is ready
+          setTimeout(extractText, 100);
         </script>
       </body>
       </html>
     `;
   };
 
-  // Load PDF and convert to base64 for the WebView
   const loadPdfInWebView = async () => {
     if (!pdfUri) return;
     
     try {
-      const base64 = await FileSystem.readAsStringAsync(pdfUri, {
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('PDF processing timed out')), 30000)
+      );
+      
+      const loadPromise = FileSystem.readAsStringAsync(pdfUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
+      
+      const base64 = await Promise.race([loadPromise, timeoutPromise]);
       
       return createPdfExtractorHtml(base64);
     } catch (error) {
@@ -271,7 +338,26 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
           />
           <View style={[styles.loadingOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
             <ActivityIndicator size="large" color="#fff" />
-            <Text style={styles.loadingText}>Extracting text from PDF...</Text>
+            <Text style={styles.loadingText}>
+              {totalPages > 0 
+                ? `Extracting text: page ${currentPage} of ${totalPages}` 
+                : 'Preparing PDF for extraction...'}
+            </Text>
+            {totalPages > 0 && (
+              <View style={styles.progressBarContainer}>
+                <View style={styles.progressBarBackground}>
+                  <View 
+                    style={[
+                      styles.progressBarFill, 
+                      { width: `${(currentPage / totalPages) * 100}%`, backgroundColor: '#fff' }
+                    ]} 
+                  />
+                </View>
+                <Text style={styles.progressText}>
+                  {Math.round((currentPage / totalPages) * 100)}%
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       ) : (
@@ -296,12 +382,12 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             </TouchableOpacity>
 
             {document && !document.canceled && (
-              <View style={styles.selectedFile}>
-                <Ionicons name="document" size={20} color={accentColor} />
-                <Text style={[styles.fileName, { color: textColor }]} numberOfLines={1}>
-                  {document.assets[0].name}
-                </Text>
-              </View>
+              <DocumentInfo 
+                name={document.assets[0].name}
+                size={document.assets[0].size}
+                type={document.assets[0].mimeType}
+                theme={theme}
+              />
             )}
           </View>
 
@@ -317,6 +403,14 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
                 <Text style={styles.extractButtonText}>Extract Text</Text>
               )}
             </TouchableOpacity>
+          )}
+
+          {isLoading && currentPage > 0 && totalPages > 0 && (
+            <ExtractionProgress 
+              currentPage={currentPage}
+              totalPages={totalPages}
+              theme={theme}
+            />
           )}
 
           {error && (
@@ -516,5 +610,30 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginTop: 10,
     fontSize: 16,
+    textAlign: 'center',
+  },
+  progressBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '80%',
+    marginTop: 15,
+  },
+  progressBarBackground: {
+    flex: 1,
+    height: 8,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+  },
+  progressText: {
+    color: '#fff',
+    marginLeft: 10,
+    fontSize: 14,
+    width: 40,
+    textAlign: 'right',
   },
 });
