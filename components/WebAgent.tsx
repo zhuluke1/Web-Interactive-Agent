@@ -15,6 +15,7 @@ import { WebView } from 'react-native-webview';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AgentStatusScreen from './AgentStatusScreen';
+import { processCommand, initializeCache } from '../services/aiService';
 
 interface WebAgentProps {
   theme: 'light' | 'dark';
@@ -29,6 +30,7 @@ export default function WebAgent({ theme }: WebAgentProps) {
   const [statusUpdates, setStatusUpdates] = useState<string[]>([]);
   const [showStatusPanel, setShowStatusPanel] = useState(false);
   const [showFullStatusScreen, setShowFullStatusScreen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const webViewRef = useRef<WebView>(null);
   const statusScrollViewRef = useRef<ScrollView>(null);
   const historyScrollViewRef = useRef<ScrollView>(null);
@@ -40,6 +42,10 @@ export default function WebAgent({ theme }: WebAgentProps) {
   const borderColor = isDark ? '#3d3d5c' : '#ddd';
   const accentColor = isDark ? '#6a6aff' : '#4040ff';
   const statusBgColor = isDark ? '#2a2a3e' : '#e6f0ff';
+
+  useEffect(() => {
+    initializeCache();
+  }, []);
 
   const addStatusUpdate = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -59,46 +65,92 @@ export default function WebAgent({ theme }: WebAgentProps) {
     }, 100);
   };
 
-  const executeCommand = () => {
+  const executeCommand = async () => {
     if (!command.trim()) return;
     
     addHistoryItem(`> ${command}`);
     addStatusUpdate(`Received command: "${command}"`);
     
-    const lowerCommand = command.toLowerCase();
+    setIsProcessing(true);
+    addStatusUpdate(`Processing with AI...`);
     
-    if (lowerCommand.startsWith('go to ') || lowerCommand.startsWith('visit ')) {
-      const site = command.split(' ').slice(2).join(' ');
-      navigateToSite(site);
-    } else if (lowerCommand.startsWith('search ')) {
-      const query = command.split(' ').slice(1).join(' ');
-      searchGoogle(query);
-    } else if (lowerCommand === 'back') {
-      webViewRef.current?.goBack();
-      addHistoryItem('Going back to previous page');
-      addStatusUpdate('Navigating to previous page in history');
-    } else if (lowerCommand === 'forward') {
-      webViewRef.current?.goForward();
-      addHistoryItem('Going forward to next page');
-      addStatusUpdate('Navigating to next page in history');
-    } else if (lowerCommand === 'reload' || lowerCommand === 'refresh') {
-      webViewRef.current?.reload();
-      addHistoryItem('Reloading page');
-      addStatusUpdate('Refreshing current page content');
-    } else if (lowerCommand.startsWith('click ')) {
-      const element = command.split(' ').slice(1).join(' ');
-      clickElement(element);
-    } else if (lowerCommand.startsWith('type ')) {
-      const text = command.split(' ').slice(1).join(' ');
-      typeText(text);
-    } else if (lowerCommand === 'help') {
-      showHelp();
-    } else {
-      addHistoryItem('Unknown command. Type "help" for available commands.');
-      addStatusUpdate('Error: Unrecognized command format');
+    try {
+      const result = await processCommand(command);
+      
+      if (result.fromCache) {
+        addStatusUpdate(`Found similar command in cache`);
+      } else {
+        addStatusUpdate(`AI processed the command`);
+      }
+      
+      addStatusUpdate(`Understanding: ${result.explanation} (confidence: ${Math.round(result.confidence * 100)}%)`);
+      
+      if (result.confidence >= 0.6) {
+        switch (result.type) {
+          case 'navigation':
+            navigateToSite(result.url || '');
+            break;
+            
+          case 'search':
+            searchGoogle(result.query || '');
+            break;
+            
+          case 'navigation_control':
+            switch (result.action) {
+              case 'back':
+                webViewRef.current?.goBack();
+                addHistoryItem('Going back to previous page');
+                addStatusUpdate('Navigating to previous page in history');
+                break;
+                
+              case 'forward':
+                webViewRef.current?.goForward();
+                addHistoryItem('Going forward to next page');
+                addStatusUpdate('Navigating to next page in history');
+                break;
+                
+              case 'reload':
+                webViewRef.current?.reload();
+                addHistoryItem('Reloading page');
+                addStatusUpdate('Refreshing current page content');
+                break;
+            }
+            break;
+            
+          case 'interaction':
+            switch (result.action) {
+              case 'click':
+                clickElement(result.target || '');
+                break;
+                
+              case 'type':
+                typeText(result.text || '');
+                break;
+            }
+            break;
+            
+          case 'system':
+            if (result.action === 'help') {
+              showHelp();
+            }
+            break;
+            
+          default:
+            addHistoryItem('I\'m not sure what you want me to do. Try rephrasing or type "help".');
+            addStatusUpdate('Command intent unclear or unsupported');
+        }
+      } else {
+        addHistoryItem(`I'm not confident I understood that correctly. Try rephrasing or type "help".`);
+        addStatusUpdate(`Low confidence (${Math.round(result.confidence * 100)}%) - unable to execute command`);
+      }
+    } catch (error) {
+      console.error('Error executing command:', error);
+      addHistoryItem('Sorry, I encountered an error processing your command.');
+      addStatusUpdate(`Error processing command: ${error}`);
+    } finally {
+      setIsProcessing(false);
+      setCommand('');
     }
-    
-    setCommand('');
   };
 
   const navigateToSite = (site: string) => {
@@ -231,9 +283,16 @@ export default function WebAgent({ theme }: WebAgentProps) {
     addStatusUpdate('Displaying help information');
     
     const helpText = [
-      'Available commands:',
+      'I understand natural language commands like:',
+      '- "Go to Twitter" or "Visit nytimes.com"',
+      '- "Search for React Native tutorials"',
+      '- "Go back" or "Return to previous page"',
+      '- "Refresh the page" or "Reload"',
+      '- "Click on login" or "Press the submit button"',
+      '- "Type hello world" or "Enter my email address"',
+      '',
+      'You can also use these specific commands:',
       '- go to [website]: Navigate to a website',
-      '- visit [website]: Navigate to a website',
       '- search [query]: Search Google for query',
       '- back: Go back to previous page',
       '- forward: Go forward to next page',
@@ -402,20 +461,29 @@ export default function WebAgent({ theme }: WebAgentProps) {
                 borderColor
               }
             ]}
-            placeholder="Enter command (type 'help' for options)"
+            placeholder="Enter command in natural language..."
             placeholderTextColor={isDark ? '#aaa' : '#999'}
             value={command}
             onChangeText={setCommand}
             onSubmitEditing={executeCommand}
+            editable={!isProcessing}
           />
           <TouchableOpacity 
             style={[
               styles.sendButton, 
-              { backgroundColor: accentColor }
+              { 
+                backgroundColor: accentColor,
+                opacity: isProcessing ? 0.7 : 1 
+              }
             ]} 
             onPress={executeCommand}
+            disabled={isProcessing}
           >
-            <Ionicons name="send" size={20} color="#fff" />
+            {isProcessing ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name="send" size={20} color="#fff" />
+            )}
           </TouchableOpacity>
         </KeyboardAvoidingView>
       </View>

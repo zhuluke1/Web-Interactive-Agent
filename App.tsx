@@ -11,7 +11,6 @@ export default function App() {
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
-    // Fade in animation when component mounts
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -35,106 +34,104 @@ export default function App() {
     ? require('./assets/appacella-logo-blue.png')
     : require('./assets/appacella-logo-white.png');
 
-  if (showWebAgent) {
-    return (
-      <SafeAreaProvider>
-        <WebAgent theme={theme === 'light' ? 'light' : 'dark'} />
-        <TouchableOpacity 
-          style={[
-            styles.backButton,
-            { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
-          ]} 
-          onPress={() => setShowWebAgent(false)}
-        >
-          <Text style={{ 
-            color: theme === 'light' ? '#fff' : '#333',
-            fontWeight: 'bold'
-          }}>
-            ← Back
-          </Text>
-        </TouchableOpacity>
-        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
-      </SafeAreaProvider>
-    );
-  }
-
   return (
     <SafeAreaProvider>
-      <View style={[
-        styles.container,
-        { backgroundColor: theme === 'light' ? '#f0f8ff' : '#1a1a2e' }
-      ]}>
-        <Animated.View style={[
-          styles.content,
-          { 
-            opacity: fadeAnim,
-            transform: [{ scale: scaleAnim }]
-          }
-        ]}>
-          <Image 
-            source={logoSource} 
-            style={styles.logo} 
-            resizeMode="contain"
-          />
-          
-          <Text style={[
-            styles.title,
-            { color: theme === 'light' ? '#333' : '#fff' }
-          ]}>
-            Welcome to Kiki
-          </Text>
-          
-          <Text style={[
-            styles.subtitle,
-            { color: theme === 'light' ? '#666' : '#ccc' }
-          ]}>
-            Tell the AI what to make!
-          </Text>
-
-          <TouchableOpacity
+      {showWebAgent ? (
+        <>
+          <WebAgent theme={theme === 'light' ? 'light' : 'dark'} />
+          <TouchableOpacity 
             style={[
-              styles.startButton,
-              { backgroundColor: theme === 'light' ? '#4040ff' : '#6a6aff' }
-            ]}
-            onPress={() => setShowWebAgent(true)}
+              styles.backButton,
+              { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
+            ]} 
+            onPress={() => setShowWebAgent(false)}
           >
-            <Text style={styles.startButtonText}>
-              Start Web Agent
+            <Text style={{ 
+              color: theme === 'light' ? '#fff' : '#333',
+              fontWeight: 'bold'
+            }}>
+              ← Back
             </Text>
           </TouchableOpacity>
-
-          <View style={styles.reactContainer}>
-            <Text style={[
-              styles.poweredBy,
-              { color: theme === 'light' ? '#666' : '#ccc' }
-            ]}>
-              Powered by
-            </Text>
+          <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+        </>
+      ) : (
+        <View style={[
+          styles.container,
+          { backgroundColor: theme === 'light' ? '#f0f8ff' : '#1a1a2e' }
+        ]}>
+          <Animated.View style={[
+            styles.content,
+            { 
+              opacity: fadeAnim,
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}>
             <Image 
-              source={require('./assets/react-logo.png')} 
-              style={styles.reactLogo} 
+              source={logoSource} 
+              style={styles.logo} 
               resizeMode="contain"
             />
-          </View>
-        </Animated.View>
+            
+            <Text style={[
+              styles.title,
+              { color: theme === 'light' ? '#333' : '#fff' }
+            ]}>
+              Welcome to Kiki
+            </Text>
+            
+            <Text style={[
+              styles.subtitle,
+              { color: theme === 'light' ? '#666' : '#ccc' }
+            ]}>
+              Tell the AI what to make!
+            </Text>
 
-        <TouchableOpacity 
-          style={[
-            styles.themeToggle,
-            { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
-          ]} 
-          onPress={toggleTheme}
-        >
-          <Text style={{ 
-            color: theme === 'light' ? '#fff' : '#333',
-            fontWeight: 'bold'
-          }}>
-            {theme === 'light' ? '🌙' : '☀️'}
-          </Text>
-        </TouchableOpacity>
-        
-        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
-      </View>
+            <TouchableOpacity
+              style={[
+                styles.startButton,
+                { backgroundColor: theme === 'light' ? '#4040ff' : '#6a6aff' }
+              ]}
+              onPress={() => setShowWebAgent(true)}
+            >
+              <Text style={styles.startButtonText}>
+                Start Web Agent
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.reactContainer}>
+              <Text style={[
+                styles.poweredBy,
+                { color: theme === 'light' ? '#666' : '#ccc' }
+              ]}>
+                Powered by
+              </Text>
+              <Image 
+                source={require('./assets/react-logo.png')} 
+                style={styles.reactLogo} 
+                resizeMode="contain"
+              />
+            </View>
+          </Animated.View>
+
+          <TouchableOpacity 
+            style={[
+              styles.themeToggle,
+              { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
+            ]} 
+            onPress={toggleTheme}
+          >
+            <Text style={{ 
+              color: theme === 'light' ? '#fff' : '#333',
+              fontWeight: 'bold'
+            }}>
+              {theme === 'light' ? '🌙' : '☀️'}
+            </Text>
+          </TouchableOpacity>
+          
+          <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+        </View>
+      )}
     </SafeAreaProvider>
   );
 }
