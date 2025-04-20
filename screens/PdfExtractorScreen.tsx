@@ -50,6 +50,19 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         return;
       }
 
+      if (result.assets[0].mimeType === 'application/pdf') {
+        try {
+          const base64 = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          
+          result._data = base64;
+          console.log(`PDF loaded, size: ${base64.length} characters`);
+        } catch (error) {
+          console.error('Error reading PDF file:', error);
+        }
+      }
+
       setDocument(result);
       setExtractedText('');
       setError(null);
@@ -89,12 +102,27 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     setCurrentPage(0);
     setTotalPages(0);
     setError(null);
+    setPreparationTime(0);
 
     if (mimeType === 'application/pdf') {
       console.log('Starting PDF extraction for:', fileUri);
       setIsLoading(true);
-      setPdfUri(fileUri);
-      setShowWebView(true);
+      
+      try {
+        console.log('Reading PDF file as base64...');
+        const base64 = await FileSystem.readAsStringAsync(fileUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        
+        console.log(`PDF file read complete. Data length: ${base64.length}`);
+        
+        setPdfUri(fileUri);
+        setShowWebView(true);
+      } catch (error) {
+        console.error('Error reading PDF file:', error);
+        setError(`Failed to read PDF file: ${error}`);
+        setIsLoading(false);
+      }
     } else if (mimeType === 'text/plain') {
       extractTextFromTxt(fileUri);
     } else {
@@ -182,41 +210,6 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     }
   };
 
-  const loadPdfInWebView = async () => {
-    if (!pdfUri) return;
-    
-    try {
-      console.log('Starting PDF loading process for:', pdfUri);
-      
-      // Set a timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('PDF processing timed out')), 30000)
-      );
-      
-      console.log('Reading PDF file as base64...');
-      const startTime = Date.now();
-      
-      const loadPromise = FileSystem.readAsStringAsync(pdfUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      
-      // Race between the file loading and the timeout
-      const base64 = await Promise.race([loadPromise, timeoutPromise]);
-      
-      const endTime = Date.now();
-      console.log(`PDF file read complete. Took ${(endTime - startTime) / 1000} seconds. Data length: ${base64.length}`);
-      
-      console.log('Creating HTML with PDF data...');
-      return createPdfExtractorHtml(base64);
-    } catch (error) {
-      console.error('Error loading PDF:', error);
-      setError(`Failed to load PDF: ${error}`);
-      setShowWebView(false);
-      setIsLoading(false);
-      return null;
-    }
-  };
-
   const createPdfExtractorHtml = (pdfBase64: string) => {
     return `
       <!DOCTYPE html>
@@ -225,149 +218,93 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PDF Text Extractor</title>
-        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          #status { color: #666; }
-        </style>
+        <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
       </head>
       <body>
-        <div id="status">Initializing PDF extractor...</div>
+        <div id="status">Loading PDF.js...</div>
         
         <script>
-          // Log to help with debugging
-          console.log('PDF extractor script started');
-          document.getElementById('status').textContent = 'PDF extractor script started';
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
           
-          // Initialize PDF.js with optimized settings
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.worker.min.js';
-          
-          function sendMessage(data) {
-            if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-              window.ReactNativeWebView.postMessage(JSON.stringify(data));
-              return true;
+          function sendToReactNative(message) {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify(message));
             }
-            console.error('ReactNativeWebView not available');
-            return false;
           }
           
-          async function extractText() {
-            try {
-              document.getElementById('status').textContent = 'Converting PDF data...';
-              console.log('Converting PDF data...');
+          document.getElementById('status').textContent = 'Starting extraction...';
+          
+          const pdfData = atob('${pdfBase64}');
+          const uint8Array = new Uint8Array(pdfData.length);
+          for (let i = 0; i < pdfData.length; i++) {
+            uint8Array[i] = pdfData.charCodeAt(i);
+          }
+          
+          pdfjsLib.getDocument({data: uint8Array}).promise.then(function(pdf) {
+            const totalPages = pdf.numPages;
+            document.getElementById('status').textContent = 'PDF loaded: ' + totalPages + ' pages';
+            
+            sendToReactNative({
+              type: 'pdfInfo',
+              totalPages: totalPages
+            });
+            
+            let extractedText = '';
+            let currentPage = 0;
+            
+            function extractNextPage() {
+              currentPage++;
               
-              // Convert base64 to array buffer more efficiently
-              const pdfData = atob('${pdfBase64}');
-              const uint8Array = new Uint8Array(pdfData.length);
-              for (let i = 0; i < pdfData.length; i++) {
-                uint8Array[i] = pdfData.charCodeAt(i);
-              }
-              
-              document.getElementById('status').textContent = 'Loading PDF document...';
-              console.log('Loading PDF document...');
-              
-              // Load the PDF document with optimized settings
-              const loadingTask = pdfjsLib.getDocument({
-                data: uint8Array,
-                cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/cmaps/',
-                cMapPacked: true,
-                disableFontFace: true, // Disable font rendering for speed
-                disableRange: true,
-                disableStream: true,
-                disableAutoFetch: true
-              });
-              
-              const pdf = await loadingTask.promise;
-              const totalPages = pdf.numPages;
-              
-              document.getElementById('status').textContent = 'PDF loaded: ' + totalPages + ' pages';
-              console.log('PDF loaded: ' + totalPages + ' pages');
-              
-              // Report total pages to React Native
-              sendMessage({
-                type: 'pdfInfo',
-                totalPages: totalPages
-              });
-              
-              // Extract text from all pages with a faster approach
-              let fullText = '';
-              
-              // Process pages in smaller batches for better performance
-              const BATCH_SIZE = 3; // Smaller batch size for more frequent updates
-              for (let i = 1; i <= totalPages; i++) {
-                document.getElementById('status').textContent = 'Processing page ' + i + ' of ' + totalPages;
-                console.log('Processing page ' + i + ' of ' + totalPages);
+              if (currentPage <= totalPages) {
+                document.getElementById('status').textContent = 'Extracting page ' + currentPage + ' of ' + totalPages;
                 
-                // Report progress to React Native
-                sendMessage({
+                sendToReactNative({
                   type: 'pdfProgress',
-                  currentPage: i,
+                  currentPage: currentPage,
                   totalPages: totalPages
                 });
                 
-                const page = await pdf.getPage(i);
-                
-                // Use a lower scale for faster text extraction
-                const textContent = await page.getTextContent({
-                  normalizeWhitespace: true,
-                  disableCombineTextItems: false
-                });
-                
-                const textItems = textContent.items.map(item => item.str);
-                const pageText = textItems.join(' ') + '\\n';
-                fullText += pageText;
-                
-                // Send partial results more frequently
-                if (i % BATCH_SIZE === 0 || i === totalPages) {
-                  console.log('Sending batch: ' + (i === totalPages ? 'final' : 'partial'));
-                  
-                  sendMessage({
-                    type: 'pdfPartialText',
-                    text: fullText,
-                    isFinal: i === totalPages
+                pdf.getPage(currentPage).then(function(page) {
+                  page.getTextContent().then(function(textContent) {
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    extractedText += pageText + '\\n\\n';
+                    
+                    if (currentPage % 3 === 0 || currentPage === totalPages) {
+                      sendToReactNative({
+                        type: 'pdfPartialText',
+                        text: extractedText,
+                        isFinal: currentPage === totalPages
+                      });
+                      
+                      if (currentPage !== totalPages) {
+                        extractedText = '';
+                      }
+                    }
+                    
+                    setTimeout(extractNextPage, 10);
+                  }).catch(function(error) {
+                    sendToReactNative({
+                      type: 'pdfError',
+                      error: 'Error extracting text from page ' + currentPage + ': ' + error.message
+                    });
                   });
-                  
-                  // Clear the text buffer if not the final batch
-                  if (i !== totalPages) {
-                    fullText = '';
-                  }
-                }
-                
-                // Allow UI to update between pages
-                if (i < totalPages) {
-                  await new Promise(resolve => setTimeout(resolve, 10));
-                }
+                }).catch(function(error) {
+                  sendToReactNative({
+                    type: 'pdfError',
+                    error: 'Error getting page ' + currentPage + ': ' + error.message
+                  });
+                });
               }
-              
-              document.getElementById('status').textContent = 'Text extraction complete!';
-              console.log('Text extraction complete!');
-              
-            } catch (error) {
-              console.error('Error extracting text:', error);
-              document.getElementById('status').textContent = 'Error: ' + error.message;
-              
-              sendMessage({
-                type: 'pdfError',
-                error: error.message
-              });
             }
-          }
-          
-          // Start extraction when page loads with a small delay to ensure WebView is ready
-          window.onload = function() {
-            console.log('Window loaded, starting extraction in 500ms');
-            document.getElementById('status').textContent = 'Window loaded, starting extraction...';
-            setTimeout(extractText, 500);
-          };
-          
-          // Fallback in case onload doesn't fire
-          setTimeout(function() {
-            if (document.getElementById('status').textContent === 'Initializing PDF extractor...') {
-              console.log('Fallback: Starting extraction');
-              document.getElementById('status').textContent = 'Fallback: Starting extraction...';
-              extractText();
-            }
-          }, 2000);
+            
+            extractNextPage();
+          }).catch(function(error) {
+            document.getElementById('status').textContent = 'Error loading PDF: ' + error.message;
+            sendToReactNative({
+              type: 'pdfError',
+              error: 'Error loading PDF: ' + error.message
+            });
+          });
         </script>
       </body>
       </html>
@@ -378,12 +315,10 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     let timer: NodeJS.Timeout | null = null;
     
     if (isLoading && showWebView && totalPages === 0) {
-      // Start a timer to track preparation time
       timer = setInterval(() => {
         setPreparationTime(prev => prev + 1);
       }, 1000);
     } else {
-      // Reset the timer when extraction starts or completes
       setPreparationTime(0);
       if (timer) {
         clearInterval(timer);
@@ -400,14 +335,13 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   useEffect(() => {
     let timeoutTimer: NodeJS.Timeout | null = null;
     
-    if (isLoading && showWebView && totalPages === 0 && preparationTime > 30) {
-      // If preparation is taking more than 30 seconds, cancel it
+    if (isLoading && showWebView && totalPages === 0 && preparationTime > 15) {
       timeoutTimer = setTimeout(() => {
-        console.log('PDF preparation timed out after 30 seconds');
-        setError('PDF preparation timed out. The file may be too large or complex.');
+        console.log('PDF preparation timed out after 15 seconds');
+        setError('PDF extraction timed out. Please try again or try a different PDF.');
         setShowWebView(false);
         setIsLoading(false);
-      }, 1000); // Give it one more second after the 30s mark
+      }, 1000);
     }
     
     return () => {
@@ -425,87 +359,24 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             ref={webViewRef}
             originWhitelist={['*']}
             source={{ 
-              html: `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                  <meta charset="UTF-8">
-                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                  <title>Loading PDF</title>
-                  <style>
-                    body { 
-                      font-family: Arial, sans-serif; 
-                      display: flex; 
-                      justify-content: center; 
-                      align-items: center; 
-                      height: 100vh; 
-                      margin: 0;
-                      background-color: #f5f5f5;
-                    }
-                    .loading { 
-                      text-align: center; 
-                      color: #333;
-                    }
-                  </style>
-                </head>
-                <body>
-                  <div class="loading">
-                    <p>Preparing PDF extractor...</p>
-                  </div>
-                </body>
-                </html>
-              `
+              html: createPdfExtractorHtml(
+                document && !document.canceled ? 
+                  document.assets[0].mimeType === 'application/pdf' ? 
+                    document._data || '' : '' 
+                  : ''
+              )
             }}
             onMessage={handleWebViewMessage}
-            onLoadEnd={async () => {
-              try {
-                console.log('WebView loaded, injecting PDF data...');
-                const startTime = Date.now();
-                
-                // When WebView loads, inject the PDF data
-                const html = await loadPdfInWebView();
-                
-                const endTime = Date.now();
-                console.log(`PDF data prepared in ${(endTime - startTime) / 1000} seconds`);
-                
-                if (html && webViewRef.current) {
-                  console.log('Injecting HTML into WebView...');
-                  // Use a more reliable way to inject the HTML
-                  webViewRef.current.injectJavaScript(`
-                    (function() {
-                      console.log('Starting HTML injection');
-                      document.open();
-                      document.write(\`${html.replace(/\\/g, '\\\\').replace(/`/g, '\\`')}\`);
-                      document.close();
-                      console.log('HTML injection complete');
-                      return true;
-                    })();
-                  `);
-                } else {
-                  throw new Error('Failed to load PDF data');
-                }
-              } catch (error) {
-                console.error('Error in onLoadEnd:', error);
-                setError(`Failed to process PDF: ${error.message}`);
-                setShowWebView(false);
-                setIsLoading(false);
-              }
-            }}
             style={styles.webView}
             javaScriptEnabled={true}
             domStorageEnabled={true}
             startInLoadingState={true}
-            scalesPageToFit={true}
-            incognito={true}
-            cacheEnabled={false}
             onError={(syntheticEvent) => {
               const { nativeEvent } = syntheticEvent;
               console.error('WebView error:', nativeEvent);
               setError(`WebView error: ${nativeEvent.description}`);
-            }}
-            onHttpError={(syntheticEvent) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error('WebView HTTP error:', nativeEvent);
+              setShowWebView(false);
+              setIsLoading(false);
             }}
           />
           <View style={[styles.loadingOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
@@ -515,9 +386,9 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
                 ? `Extracting text: page ${currentPage} of ${totalPages}` 
                 : `Preparing PDF for extraction... (${preparationTime}s)`}
             </Text>
-            {preparationTime > 15 && totalPages === 0 && (
+            {preparationTime > 10 && totalPages === 0 && (
               <Text style={[styles.loadingSubText, { color: '#ff9999' }]}>
-                This is taking longer than expected. Large PDFs may take more time.
+                This is taking longer than expected. Please try again.
               </Text>
             )}
             {totalPages > 0 && (
