@@ -3326,6 +3326,11 @@ expo-blur@~14.0.3:
   resolved "https://registry.npmjs.org/expo-blur/-/expo-blur-14.0.3.tgz"
   integrity sha512-BL3xnqBJbYm3Hg9t/HjNjdeY7N/q8eK5tsLYxswWG1yElISWZmMvrXYekl7XaVCPfyFyz8vQeaxd7q74ZY3Wrw==
 
+expo-clipboard@~7.0.1:
+  version "7.0.1"
+  resolved "https://registry.yarnpkg.com/expo-clipboard/-/expo-clipboard-7.0.1.tgz#31d61270e77a37d2a6b7ae9abf79e060497ef43b"
+  integrity sha512-rqYk0+WoqitPcPKxmMxSpLonX1E5Ije3LBYfnYMbH3xU5Gr8EAH9QnOWOi4BgahUPvcot6nbFEnx+DqARrmxKQ==
+
 expo-constants@~17.0.5, expo-constants@~17.0.7:
   version "17.0.7"
   resolved "https://registry.npmjs.org/expo-constants/-/expo-constants-17.0.7.tgz"
@@ -3334,10 +3339,22 @@ expo-constants@~17.0.5, expo-constants@~17.0.7:
     "@expo/config" "~10.0.10"
     "@expo/env" "~0.4.2"
 
+expo-document-picker@~13.0.3:
+  version "13.0.3"
+  resolved "https://registry.yarnpkg.com/expo-document-picker/-/expo-document-picker-13.0.3.tgz#9ec9b056447d11a68d61e93d33c2211fd01b460f"
+  integrity sha512-348xcsiA/YhgWm1SuJNNdb5cUDpRJYCyIk8MhOU2MEDxbVRR+Q1TiUBTCIMVqaWHcxsFQzP56Wwv9n24qjeILg==
+
 expo-file-system@~18.0.11:
   version "18.0.11"
   resolved "https://registry.npmjs.org/expo-file-system/-/expo-file-system-18.0.11.tgz"
   integrity sha512-yDwYfEzWgPXsBZHJW2RJ8Q66ceiFN9Wa5D20pp3fjXVkzPBDwxnYwiPWk4pVmCa5g4X5KYMoMne1pUrsL4OEpg==
+  dependencies:
+    web-streams-polyfill "^3.3.2"
+
+expo-file-system@~18.0.12:
+  version "18.0.12"
+  resolved "https://registry.yarnpkg.com/expo-file-system/-/expo-file-system-18.0.12.tgz#6ceeeb0725f6c5faaf58112f18c073c2acfb3027"
+  integrity sha512-HAkrd/mb8r+G3lJ9MzmGeuW2B+BxQR1joKfeCyY4deLl1zoZ48FrAWjgZjHK9aHUVhJ0ehzInu/NQtikKytaeg==
   dependencies:
     web-streams-polyfill "^3.3.2"
 
