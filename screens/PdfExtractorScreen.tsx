@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,7 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   const [showWebView, setShowWebView] = useState<boolean>(false);
   const [pdfUri, setPdfUri] = useState<string | null>(null);
   const webViewRef = useRef<WebView>(null);
+  const [preparationTime, setPreparationTime] = useState<number>(0);
 
   const isDark = theme === 'dark';
   const backgroundColor = isDark ? '#1a1a2e' : '#f0f8ff';
@@ -185,16 +186,27 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     if (!pdfUri) return;
     
     try {
+      console.log('Starting PDF loading process for:', pdfUri);
+      
+      // Set a timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('PDF processing timed out')), 30000)
       );
+      
+      console.log('Reading PDF file as base64...');
+      const startTime = Date.now();
       
       const loadPromise = FileSystem.readAsStringAsync(pdfUri, {
         encoding: FileSystem.EncodingType.Base64,
       });
       
+      // Race between the file loading and the timeout
       const base64 = await Promise.race([loadPromise, timeoutPromise]);
       
+      const endTime = Date.now();
+      console.log(`PDF file read complete. Took ${(endTime - startTime) / 1000} seconds. Data length: ${base64.length}`);
+      
+      console.log('Creating HTML with PDF data...');
       return createPdfExtractorHtml(base64);
     } catch (error) {
       console.error('Error loading PDF:', error);
@@ -362,6 +374,49 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     `;
   };
 
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    
+    if (isLoading && showWebView && totalPages === 0) {
+      // Start a timer to track preparation time
+      timer = setInterval(() => {
+        setPreparationTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      // Reset the timer when extraction starts or completes
+      setPreparationTime(0);
+      if (timer) {
+        clearInterval(timer);
+      }
+    }
+    
+    return () => {
+      if (timer) {
+        clearInterval(timer);
+      }
+    };
+  }, [isLoading, showWebView, totalPages]);
+
+  useEffect(() => {
+    let timeoutTimer: NodeJS.Timeout | null = null;
+    
+    if (isLoading && showWebView && totalPages === 0 && preparationTime > 30) {
+      // If preparation is taking more than 30 seconds, cancel it
+      timeoutTimer = setTimeout(() => {
+        console.log('PDF preparation timed out after 30 seconds');
+        setError('PDF preparation timed out. The file may be too large or complex.');
+        setShowWebView(false);
+        setIsLoading(false);
+      }, 1000); // Give it one more second after the 30s mark
+    }
+    
+    return () => {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    };
+  }, [isLoading, showWebView, totalPages, preparationTime]);
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor }]}>
       {showWebView && pdfUri ? (
@@ -404,13 +459,25 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             onMessage={handleWebViewMessage}
             onLoadEnd={async () => {
               try {
+                console.log('WebView loaded, injecting PDF data...');
+                const startTime = Date.now();
+                
+                // When WebView loads, inject the PDF data
                 const html = await loadPdfInWebView();
+                
+                const endTime = Date.now();
+                console.log(`PDF data prepared in ${(endTime - startTime) / 1000} seconds`);
+                
                 if (html && webViewRef.current) {
+                  console.log('Injecting HTML into WebView...');
+                  // Use a more reliable way to inject the HTML
                   webViewRef.current.injectJavaScript(`
                     (function() {
+                      console.log('Starting HTML injection');
                       document.open();
                       document.write(\`${html.replace(/\\/g, '\\\\').replace(/`/g, '\\`')}\`);
                       document.close();
+                      console.log('HTML injection complete');
                       return true;
                     })();
                   `);
@@ -431,14 +498,28 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
             scalesPageToFit={true}
             incognito={true}
             cacheEnabled={false}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.error('WebView error:', nativeEvent);
+              setError(`WebView error: ${nativeEvent.description}`);
+            }}
+            onHttpError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.error('WebView HTTP error:', nativeEvent);
+            }}
           />
           <View style={[styles.loadingOverlay, { backgroundColor: 'rgba(0,0,0,0.7)' }]}>
             <ActivityIndicator size="large" color="#fff" />
             <Text style={styles.loadingText}>
               {totalPages > 0 
                 ? `Extracting text: page ${currentPage} of ${totalPages}` 
-                : 'Preparing PDF for extraction...'}
+                : `Preparing PDF for extraction... (${preparationTime}s)`}
             </Text>
+            {preparationTime > 15 && totalPages === 0 && (
+              <Text style={[styles.loadingSubText, { color: '#ff9999' }]}>
+                This is taking longer than expected. Large PDFs may take more time.
+              </Text>
+            )}
             {totalPages > 0 && (
               <View style={styles.progressBarContainer}>
                 <View style={styles.progressBarBackground}>
@@ -707,6 +788,13 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
     textAlign: 'center',
+  },
+  loadingSubText: {
+    color: '#fff',
+    marginTop: 5,
+    fontSize: 14,
+    textAlign: 'center',
+    maxWidth: '80%',
   },
   progressBarContainer: {
     flexDirection: 'row',
