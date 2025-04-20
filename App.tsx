@@ -3,10 +3,13 @@ import { StyleSheet, Text, View, Image, TouchableOpacity, Animated } from 'react
 import { useState, useEffect, useRef } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import WebAgent from './components/WebAgent';
+import PdfExtractorScreen from './screens/PdfExtractorScreen';
+import * as Clipboard from 'expo-clipboard';
 
 export default function App() {
   const [theme, setTheme] = useState('light');
   const [showWebAgent, setShowWebAgent] = useState(false);
+  const [showPdfExtractor, setShowPdfExtractor] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
@@ -34,104 +37,149 @@ export default function App() {
     ? require('./assets/appacella-logo-blue.png')
     : require('./assets/appacella-logo-white.png');
 
+  const goBack = () => {
+    setShowWebAgent(false);
+    setShowPdfExtractor(false);
+  };
+
+  if (showWebAgent) {
+    return (
+      <SafeAreaProvider>
+        <WebAgent theme={theme === 'light' ? 'light' : 'dark'} />
+        <TouchableOpacity 
+          style={[
+            styles.backButton,
+            { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
+          ]} 
+          onPress={goBack}
+        >
+          <Text style={{ 
+            color: theme === 'light' ? '#fff' : '#333',
+            fontWeight: 'bold'
+          }}>
+            ← Back
+          </Text>
+        </TouchableOpacity>
+        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+      </SafeAreaProvider>
+    );
+  }
+
+  if (showPdfExtractor) {
+    return (
+      <SafeAreaProvider>
+        <PdfExtractorScreen theme={theme === 'light' ? 'light' : 'dark'} />
+        <TouchableOpacity 
+          style={[
+            styles.backButton,
+            { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
+          ]} 
+          onPress={goBack}
+        >
+          <Text style={{ 
+            color: theme === 'light' ? '#fff' : '#333',
+            fontWeight: 'bold'
+          }}>
+            ← Back
+          </Text>
+        </TouchableOpacity>
+        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
-      {showWebAgent ? (
-        <>
-          <WebAgent theme={theme === 'light' ? 'light' : 'dark'} />
-          <TouchableOpacity 
+      <View style={[
+        styles.container,
+        { backgroundColor: theme === 'light' ? '#f0f8ff' : '#1a1a2e' }
+      ]}>
+        <Animated.View style={[
+          styles.content,
+          { 
+            opacity: fadeAnim,
+            transform: [{ scale: scaleAnim }]
+          }
+        ]}>
+          <Image 
+            source={logoSource} 
+            style={styles.logo} 
+            resizeMode="contain"
+          />
+          
+          <Text style={[
+            styles.title,
+            { color: theme === 'light' ? '#333' : '#fff' }
+          ]}>
+            Welcome to Kiki
+          </Text>
+          
+          <Text style={[
+            styles.subtitle,
+            { color: theme === 'light' ? '#666' : '#ccc' }
+          ]}>
+            Tell the AI what to make!
+          </Text>
+
+          <TouchableOpacity
             style={[
-              styles.backButton,
-              { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
-            ]} 
-            onPress={() => setShowWebAgent(false)}
+              styles.startButton,
+              { backgroundColor: theme === 'light' ? '#4040ff' : '#6a6aff' }
+            ]}
+            onPress={() => setShowPdfExtractor(true)}
           >
-            <Text style={{ 
-              color: theme === 'light' ? '#fff' : '#333',
-              fontWeight: 'bold'
-            }}>
-              ← Back
+            <Text style={styles.startButtonText}>
+              PDF Text Extractor
             </Text>
           </TouchableOpacity>
-          <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
-        </>
-      ) : (
-        <View style={[
-          styles.container,
-          { backgroundColor: theme === 'light' ? '#f0f8ff' : '#1a1a2e' }
-        ]}>
-          <Animated.View style={[
-            styles.content,
-            { 
-              opacity: fadeAnim,
-              transform: [{ scale: scaleAnim }]
-            }
-          ]}>
-            <Image 
-              source={logoSource} 
-              style={styles.logo} 
-              resizeMode="contain"
-            />
-            
-            <Text style={[
-              styles.title,
-              { color: theme === 'light' ? '#333' : '#fff' }
-            ]}>
-              Welcome to Kiki
+
+          <TouchableOpacity
+            style={[
+              styles.startButton,
+              { 
+                backgroundColor: theme === 'light' ? '#4040ff' : '#6a6aff',
+                marginTop: 15
+              }
+            ]}
+            onPress={() => setShowWebAgent(true)}
+          >
+            <Text style={styles.startButtonText}>
+              Start Web Agent
             </Text>
-            
+          </TouchableOpacity>
+
+          <View style={styles.reactContainer}>
             <Text style={[
-              styles.subtitle,
+              styles.poweredBy,
               { color: theme === 'light' ? '#666' : '#ccc' }
             ]}>
-              Tell the AI what to make!
+              Powered by
             </Text>
+            <Image 
+              source={require('./assets/react-logo.png')} 
+              style={styles.reactLogo} 
+              resizeMode="contain"
+            />
+          </View>
+        </Animated.View>
 
-            <TouchableOpacity
-              style={[
-                styles.startButton,
-                { backgroundColor: theme === 'light' ? '#4040ff' : '#6a6aff' }
-              ]}
-              onPress={() => setShowWebAgent(true)}
-            >
-              <Text style={styles.startButtonText}>
-                Start Web Agent
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.reactContainer}>
-              <Text style={[
-                styles.poweredBy,
-                { color: theme === 'light' ? '#666' : '#ccc' }
-              ]}>
-                Powered by
-              </Text>
-              <Image 
-                source={require('./assets/react-logo.png')} 
-                style={styles.reactLogo} 
-                resizeMode="contain"
-              />
-            </View>
-          </Animated.View>
-
-          <TouchableOpacity 
-            style={[
-              styles.themeToggle,
-              { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
-            ]} 
-            onPress={toggleTheme}
-          >
-            <Text style={{ 
-              color: theme === 'light' ? '#fff' : '#333',
-              fontWeight: 'bold'
-            }}>
-              {theme === 'light' ? '🌙' : '☀️'}
-            </Text>
-          </TouchableOpacity>
-          
-          <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
-        </View>
-      )}
+        <TouchableOpacity 
+          style={[
+            styles.themeToggle,
+            { backgroundColor: theme === 'light' ? '#333' : '#f0f8ff' }
+          ]} 
+          onPress={toggleTheme}
+        >
+          <Text style={{ 
+            color: theme === 'light' ? '#fff' : '#333',
+            fontWeight: 'bold'
+          }}>
+            {theme === 'light' ? '🌙' : '☀️'}
+          </Text>
+        </TouchableOpacity>
+        
+        <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
+      </View>
     </SafeAreaProvider>
   );
 }
@@ -169,6 +217,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 30,
     borderRadius: 25,
     marginTop: 10,
+    width: 220,
+    alignItems: 'center',
   },
   startButtonText: {
     color: '#fff',

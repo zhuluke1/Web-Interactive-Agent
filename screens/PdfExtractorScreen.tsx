@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,10 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { WebView } from 'react-native-webview';
 import { extractTextFromDocument } from '../services/pdfService';
 
 export default function PdfExtractorScreen({ theme = 'light' }) {
@@ -21,6 +23,8 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   const [extractedText, setExtractedText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPdfLoading, setIsPdfLoading] = useState<boolean>(false);
+  const webViewRef = useRef<WebView>(null);
 
   const isDark = theme === 'dark';
   const backgroundColor = isDark ? '#1a1a2e' : '#f0f8ff';
@@ -32,8 +36,7 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
   const pickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'text/plain', 'application/msword', 
-               'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        type: ['application/pdf', 'text/plain'],
         copyToCacheDirectory: true,
       });
 
@@ -44,9 +47,27 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
       setDocument(result);
       setExtractedText('');
       setError(null);
+      
+      // If it's a text file, extract immediately
+      if (result.assets[0].mimeType === 'text/plain') {
+        extractTextFromTxt(result.assets[0].uri);
+      }
     } catch (err) {
       console.error('Error picking document:', err);
       setError('Failed to pick document. Please try again.');
+    }
+  };
+
+  const extractTextFromTxt = async (uri: string) => {
+    setIsLoading(true);
+    try {
+      const text = await FileSystem.readAsStringAsync(uri);
+      setExtractedText(text);
+    } catch (err) {
+      console.error('Error reading text file:', err);
+      setError(`Failed to read text file: ${err}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -56,17 +77,40 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
+    const fileUri = document.assets[0].uri;
+    const mimeType = document.assets[0].mimeType;
 
+    if (mimeType === 'application/pdf') {
+      // For PDFs, we'll use the WebView approach
+      setIsPdfLoading(true);
+      setIsLoading(true);
+      
+      // The actual extraction happens in the WebView's injected JavaScript
+      // We'll show the WebView temporarily to extract the text
+      
+      // The extraction will be completed when the WebView sends a message
+    } else if (mimeType === 'text/plain') {
+      // For text files, we've already extracted the text
+      if (!extractedText) {
+        extractTextFromTxt(fileUri);
+      }
+    } else {
+      setError(`Unsupported file type: ${mimeType}`);
+    }
+  };
+
+  const handleWebViewMessage = (event: any) => {
     try {
-      const fileUri = document.assets[0].uri;
-      const text = await extractTextFromDocument(fileUri);
-      setExtractedText(text);
-    } catch (err) {
-      console.error('Error extracting text:', err);
-      setError(`Failed to extract text: ${err}`);
-    } finally {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'pdfText') {
+        setExtractedText(data.text);
+        setIsPdfLoading(false);
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Error parsing WebView message:', error);
+      setError('Failed to extract text from PDF.');
+      setIsPdfLoading(false);
       setIsLoading(false);
     }
   };
@@ -108,6 +152,60 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
     }
   };
 
+  // This is the JavaScript that will be injected into the WebView to extract text from PDFs
+  const pdfExtractorScript = `
+    // Function to extract text from PDF using PDF.js
+    async function extractPdfText() {
+      try {
+        // Load PDF.js from CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.4.120/build/pdf.min.js';
+        document.head.appendChild(script);
+        
+        // Wait for PDF.js to load
+        await new Promise(resolve => {
+          script.onload = resolve;
+        });
+        
+        // Get the PDF file from the URL
+        const pdfUrl = window.location.href;
+        const loadingTask = pdfjsLib.getDocument(pdfUrl);
+        const pdf = await loadingTask.promise;
+        
+        let fullText = '';
+        
+        // Extract text from each page
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const textItems = textContent.items.map(item => item.str);
+          fullText += textItems.join(' ') + '\\n';
+        }
+        
+        // Send the extracted text back to React Native
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'pdfText',
+          text: fullText
+        }));
+      } catch (error) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'error',
+          message: error.toString()
+        }));
+      }
+    }
+    
+    // Start extraction when the page loads
+    document.addEventListener('DOMContentLoaded', extractPdfText);
+    
+    // If the document is already loaded, start extraction immediately
+    if (document.readyState === 'complete') {
+      extractPdfText();
+    }
+    
+    true;
+  `;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor }]}>
       <View style={styles.header}>
@@ -139,7 +237,7 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         )}
       </View>
 
-      {document && !document.canceled && (
+      {document && !document.canceled && document.assets[0].mimeType === 'application/pdf' && (
         <TouchableOpacity
           style={[styles.extractButton, { backgroundColor: accentColor }]}
           onPress={extractText}
@@ -157,6 +255,20 @@ export default function PdfExtractorScreen({ theme = 'light' }) {
         <View style={[styles.errorContainer, { borderColor: '#ff4d4d' }]}>
           <Ionicons name="alert-circle-outline" size={24} color="#ff4d4d" />
           <Text style={[styles.errorText, { color: '#ff4d4d' }]}>{error}</Text>
+        </View>
+      )}
+
+      {isPdfLoading && document && !document.canceled && document.assets[0].mimeType === 'application/pdf' && (
+        <View style={styles.webViewContainer}>
+          <WebView
+            ref={webViewRef}
+            source={{ uri: document.assets[0].uri }}
+            style={{ width: 1, height: 1, opacity: 0 }}
+            originWhitelist={['*']}
+            javaScriptEnabled={true}
+            injectedJavaScript={pdfExtractorScript}
+            onMessage={handleWebViewMessage}
+          />
         </View>
       )}
 
@@ -327,5 +439,11 @@ const styles = StyleSheet.create({
   placeholderText: {
     fontSize: 16,
     textAlign: 'center',
+  },
+  webViewContainer: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
   },
 });
